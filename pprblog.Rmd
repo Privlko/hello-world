@@ -1,0 +1,222 @@
+---
+title: "Property price register"
+author: "Ivan Privalko"
+date: "16 August 2018"
+output: html_document
+---
+Before I start, the usual disclaimers apply. First, the views below do not represent my employer. Second, I am not an expert in R or the Property Price Register database. It's possible that other methods for looking at the data exist. It's also possible that the PPR dataset is not a valid measure of the housing market's performance. 
+
+In this blog post, I want to look at Ireland's property price register, and show how the excel spreadsheet can be made more accessible using R. Currently, all property sales are listed on a [property price register](https://www.propertypriceregister.ie/website/npsra/pprweb.nsf/page/ppr-home-en), which is essentially, a giant excel spreadsheet. Here, a single row represents a sales transaction.
+
+The register contains some interesting information on housing sales. It includes a date of sale, the price, and address of all residential properties purchased in Ireland since the 1st January 2010. Importantly, it only contains sales data where stamp duty was paid, as a result it may leave out certain transactions. For example, local authority purchases where stamp duty is not paid.
+
+Using a few lines of code, it's possible to split the transactions into annual, quarterly, monthly, or even weekly bins. Since address data also exists, it's possible to limit the analysis to a specific county, or in Dublin's case, a specific postal district. For the purpose of this post, I look at the annual number of housing transactions in Dublin since 2010. I also look at the annual average price of a housing transaction since 2010. I split these by transactions for new and second-hand homes. 
+
+# Housing transactions
+
+First, it is worth noting the total number of housing transactions which occured annualy. It's wprth remembering that housing sales follow seasonal effects, and that each year contains a lot of variation at the start and end of the year. None the less, the total sum figure provides a view of how the market has evolved since 2010.
+
+```{r, include=FALSE}
+
+
+# load the packages -------------------------------------------------------
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(tibbletime)
+library(forecast)
+library(tseries)
+library(ggplot2)
+library(scales)
+
+
+
+# load the data -------------------------------------------------------
+
+ppp <-  read_csv("PPR-ALL.csv") %>%
+  as.tibble() %>%
+  filter(county=="Dublin") 
+
+# think of some levels ----------------------------------------------------
+
+l_notfull <- c("Yes", "No")
+l_sansvat <- c("Yes", "No")
+l_descript <- c("New Dwelling house /Apartment", 
+                "Second-Hand Dwelling house /Apartment")
+l_size <- c("greater than or equal to 38 sq metres and less than 125 sq metres",
+            "greater than 125 sq metres")
+
+# parse some variables-------------------------------------------------------
+
+ppp$date <- dmy(ppp$date) 
+ppp$price<- parse_number(ppp$price, locale = locale(grouping_mark = ","))
+ppp$notfull <-  parse_factor(ppp$notfull, levels = l_notfull)
+ppp$vat.exc <- parse_factor(ppp$vat.exc, levels = l_sansvat)
+ppp$description <- parse_factor(ppp$description, levels = l_descript)
+ppp$size <- parse_factor(ppp$size, levels = l_size)
+ppp
+# Use dplyr to set up some frames--------------------------------------------
+
+
+time_ppp <- as_tbl_time(ppp, date)
+
+
+
+q <- time_ppp %>%
+  select(date, price, description, notfull) %>%
+  filter(notfull=="No") %>%
+  collapse_by("yearly") %>%
+  group_by(date, description) %>%
+  summarise(n = n(),
+            meanty = mean(price)) 
+
+q$meanty<- parse_number(q$meanty)
+
+
+# plot titles ----------------------------------------------------------------
+my_title <- "Average House Prices Have Risen Year-On-Year"
+my_subtitle <- "Average sales price in the PPR data (Co. Dublin units sold at full price) \nshows a steady rise in prices year on year."
+my_caption <- "Source: Property Price Register @privlko"
+
+##
+
+my_title2 <- "Volume of sales has risen gradually since 2014"
+my_subtitle2 <- "Most of the growth in volume of sales (Co.Dublin units at full price) \nhas happened among new builds. There seems to be a ceiling in raw numbers of sales."
+my_caption2 <- "Source: Property Price Register @privlko"
+
+# ggplot ----------------------------------------------------------------------
+
+vv<- ggplot(q) +
+  geom_bar(stat= "identity",
+           position = "dodge",
+           aes(x=as.factor(date), y=n, fill=description))+
+  coord_flip() +
+  scale_x_discrete("Year", 
+                   labels=c("2010", "2011", "2012", "2013", "2014", 
+                            "2015", "2016", "2017", "2018")) +
+  scale_y_continuous("Number of Sales",
+                     breaks = seq(0, 30000, by=5000)) +
+  scale_colour_discrete() +
+  labs(title= my_title2,
+       subtitle= my_subtitle2,
+       caption= my_caption2,
+       fill= "Sale Type") +
+  theme_minimal() +
+  scale_fill_discrete(breaks=c("New Dwelling house /Apartment", 
+                               "Second-Hand Dwelling house /Apartment", 
+                               "NA"),
+                      labels=c("New", "Second-Hand", "NA"))
+
+
+```
+
+
+The chart below tracks the volume of sales in Co. Dublin since 2010. This figure is split by New and Second hand sales. Second hand sales rise steadily until 2014. The figure seems to stall at 12,500 units. The volume of new homes being sold in Dublin rose year on year since 2011. 
+
+The data for 2018 is incomplete but was last updated on the 10th of August 2018. It's too early to tell whether sales volumes will surpass 2017 figures, but unless a significant number of transactions occur between now and January, it's possible that total transactions will fall for the first time in 2011.
+
+
+```{r}
+vv
+```
+
+
+```{r, include=FALSE}
+# creating quarterly data ----------------------------------------------------
+
+p <- time_ppp %>%
+  select(date, price, description, notfull) %>%
+  filter(notfull=="No") %>%
+  filter(date > "2015-12-31") %>% 
+  collapse_by("quarterly") %>%
+  group_by(date, description) %>%
+  summarise(n = n(),
+            meanty = mean(price)) 
+
+p$meanty<- parse_number(p$meanty)
+
+
+View(p)
+
+
+my_title3 <- "Most relevant quarter"
+my_subtitle3 <- "Quarter"
+my_caption <- "Source: Property Price Register @privlko"
+
+ww<- ggplot(p) +
+  geom_bar(stat= "identity",
+           position = "dodge",
+           aes(x=as.factor(date), y=n, fill=description))+
+  coord_flip() +
+  scale_x_discrete("Quarter", 
+                   labels=c("Q1 2016", "Q2 2016", "Q3 2016", "Q4 2016", 
+                            "Q1 2017", "Q2 2017", "Q3 2017", "Q4 2017", 
+                            "Q1 2018", "Q2 2018", "Q3 2018")) +
+  scale_y_continuous("Number of Sales",
+                     breaks = seq(0, 30000, by=5000)) +
+  scale_colour_discrete() +
+  labs(title= my_title1,
+       subtitle= my_subtitle,
+       caption= my_caption,
+       fill= "Sale Type") +
+  theme_minimal() +
+  scale_fill_discrete(breaks=c("New Dwelling house /Apartment", 
+                               "Second-Hand Dwelling house /Apartment", 
+                               "NA"),
+                      labels=c("New", "Second-Hand", "NA"))
+
+
+```
+
+
+It's worth looking at the last 4 quarters. The chart below splits the number of transaction by Quarters for 2016, 2017, and whatever data exists for 2018. There are a few things to note here. First, in each year Q4 is the busiest quarter. For the time being, I only focus on three years of data, but generally, Q4 contains the highest number of transactions. Secondly, 2018's Q1 and Q2 are generally on par with those of previous years in second hand homes, but far surpass previous years in New Homes. 
+
+```{r}
+ww
+```
+
+In general, the number of transactions in 2018 is set to surpass previous years and wwill likely produce more sales. It is worth asking if thisgradual increase in the number of transactions has done anything to lower the price of homes.
+
+## Average price
+
+The chart below lists the average price of homes in Dublin, specifically the chat only conisders itransactions where the full market price for a proerty was paid. 
+
+```{r, include=FALSE}
+
+# plot --------------------------------------------------------------------
+
+
+my_title <- "Average House Prices Have Risen Year-On-Year"
+my_subtitle <- "Average sales price in the PPR data (Co. Dublin units sold at full price) \nshows a steady rise in prices year on year."
+my_caption <- "Source: Property Price Register @privlko"
+
+rr <- ggplot(q) +
+  geom_bar(stat = "identity",
+           position="dodge",
+           aes(x=as.factor(date), y=meanty, fill= description)) +
+  coord_flip() +
+  scale_x_discrete("Year", 
+                   labels=c("2010", "2011", "2012", "2013", "2014", 
+                            "2015", "2016", "2017", "2018")) +
+  scale_y_continuous("Average Cost",
+                     breaks = seq(100000, 700000, by=200000),
+                     labels = dollar_format(suffix = "", prefix = "€")) +
+  scale_colour_discrete() +
+  labs(title= my_title,
+       subtitle= my_subtitle,
+       caption= my_caption,
+       fill= "Sale Type") +
+  theme_minimal() +
+  scale_fill_discrete(breaks=c("New Dwelling house /Apartment", 
+                               "Second-Hand Dwelling house /Apartment", 
+                               "NA"),
+                      labels=c("New", "Second-Hand", "NA"))
+
+```
+
+The plot below lists the average annual price of a transaction in Co Dublin. Generally, the average is not a great indicator of housing markets because these can be affected by extreme values. However, it is useful to show the general trend of transactions. It seems as though prices are generally rising steadily year on year with homes now crossig the €400,000 mark. 
+
+```{r}
+rr
+```
+
